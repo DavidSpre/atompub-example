@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+atom_app.sqlite3
+.venv/
