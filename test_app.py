@@ -58,6 +58,32 @@ class AtomNotebookTests(unittest.TestCase):
         self.assertIn(b"<title>Updated</title>", update_response.data)
         self.assertIn(b"<content type=\"text\">New content</content>", update_response.data)
 
+    def test_atompub_delete_removes_existing_entry(self) -> None:
+        create_response = self.client.post(
+            "/collections/entries",
+            data=b"<entry xmlns='http://www.w3.org/2005/Atom'><title>To delete</title><content>Remove me</content></entry>",
+            content_type="application/atom+xml",
+        )
+        entry_url = create_response.headers["Location"].replace(app.BASE_URL, "")
+        delete_response = self.client.delete(entry_url)
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(self.client.get(entry_url).status_code, 404)
+
+    def test_atompub_if_match_rejects_stale_update(self) -> None:
+        create_response = self.client.post(
+            "/collections/entries",
+            data=b"<entry xmlns='http://www.w3.org/2005/Atom'><title>Versioned</title><content>Original</content></entry>",
+            content_type="application/atom+xml",
+        )
+        entry_url = create_response.headers["Location"].replace(app.BASE_URL, "")
+        response = self.client.put(
+            entry_url,
+            headers={"If-Match": '"stale"'},
+            data=b"<entry xmlns='http://www.w3.org/2005/Atom'><title>Changed</title><content>Changed</content></entry>",
+            content_type="application/atom+xml",
+        )
+        self.assertEqual(response.status_code, 412)
+
     def test_websub_subscription_receives_new_entry(self) -> None:
         response = self.client.get(
             "/hub",

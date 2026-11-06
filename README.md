@@ -7,6 +7,7 @@ This prototype lets users publish short entries through a web form. Entries are 
 - `GET /collections/entries` reads the AtomPub collection.
 - `POST /collections/entries` accepts an Atom `<entry>` and publishes it.
 - `PUT /entries/<id>.atom` replaces an existing Atom entry.
+- `DELETE /entries/<id>.atom` deletes an existing Atom entry.
 - `GET /hub` and `POST /hub` implement the WebSub subscription handshake.
 - New entries are delivered as Atom feed updates to registered WebSub callbacks.
 
@@ -121,5 +122,13 @@ curl.exe -X PUT "http://localhost:5000/entries/1.atom" `
 ```
 
 The server returns the updated Atom entry with status `200 OK` and sends the updated feed to WebSub subscribers.
+
+To delete an entry:
+
+```sh
+curl -X DELETE "http://localhost:5000/entries/1.atom"
+```
+
+The server returns `204 No Content` and sends the changed feed to WebSub subscribers. Individual entries include an `ETag`; if supplied, `If-Match` must match that tag for `PUT` and `DELETE`, otherwise the server returns `412 Precondition Failed`.
 
 For a real external feed reader or callback service, the callback must be publicly reachable. Use a tunnel such as `ngrok http 5001` and subscribe using its HTTPS callback URL.

@@ -113,6 +113,15 @@ def update_entry(entry_id: int, title: str, content: str, author: str) -> sqlite
     return row
 
 
+def delete_entry(entry_id: int) -> bool:
+    with db_lock, db_connection() as connection:
+        cursor = connection.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+        deleted = cursor.rowcount == 1
+    if deleted:
+        notify_subscribers()
+    return deleted
+
+
 def list_entries() -> list[sqlite3.Row]:
     with db_connection() as connection:
         return connection.execute(
@@ -136,6 +145,12 @@ def atom_entry(row: sqlite3.Row) -> ET.Element:
     xml_text(entry, "id", row["entry_id"])
     xml_text(entry, "title", row["title"])
     xml_text(entry, "updated", row["created_at"])
+    self_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
+    self_link.set("rel", "self")
+    self_link.set("href", f"{BASE_URL}/entries/{row['id']}.atom")
+    edit_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
+    edit_link.set("rel", "edit")
+    edit_link.set("href", f"{BASE_URL}/entries/{row['id']}.atom")
     author = ET.SubElement(entry, f"{{{ATOM_NS}}}author")
     xml_text(author, "name", row["author"])
     xml_text(entry, "content", row["content"]).set("type", "text")
@@ -162,6 +177,15 @@ def atom_feed(rows: list[sqlite3.Row]) -> bytes:
 
 def atom_response(payload: bytes, status: int = 200) -> Response:
     return Response(payload, status=status, content_type="application/atom+xml; charset=utf-8")
+
+
+def entry_etag(row: sqlite3.Row) -> str:
+    return f'"{row["created_at"]}"'
+
+
+def matches_if_match(row: sqlite3.Row) -> bool:
+    requested_etag = request.headers.get("If-Match")
+    return requested_etag is None or requested_etag == "*" or requested_etag == entry_etag(row)
 
 
 def parse_atom_entry(payload: bytes) -> tuple[str, str, str]:
@@ -321,11 +345,23 @@ def feed() -> Response:
     return atom_response(atom_feed(list_entries()))
 
 
-@app.route("/entries/<int:entry_id>.atom", methods=["GET", "PUT"])
+@app.route("/entries/<int:entry_id>.atom", methods=["GET", "PUT", "DELETE"])
 def entry_atom(entry_id: int) -> Response:
     row = get_entry(entry_id)
     if row is None:
         return Response("Entry not found", status=404)
+    if request.method == "GET":
+        response = atom_response(
+            ET.tostring(atom_entry(row), encoding="utf-8", xml_declaration=True)
+        )
+        response.headers["ETag"] = entry_etag(row)
+        return response
+    if not matches_if_match(row):
+        return Response("The entry has changed; refresh it before modifying it.", status=412)
+    if request.method == "DELETE":
+        if not delete_entry(entry_id):
+            return Response("Entry not found", status=404)
+        return Response(status=204)
     if request.method == "PUT":
         try:
             title, content, author = parse_atom_entry(request.get_data())
@@ -334,7 +370,11 @@ def entry_atom(entry_id: int) -> Response:
         row = update_entry(entry_id, title, content, author)
         if row is None:
             return Response("Entry not found", status=404)
-    return atom_response(ET.tostring(atom_entry(row), encoding="utf-8", xml_declaration=True))
+    response = atom_response(
+        ET.tostring(atom_entry(row), encoding="utf-8", xml_declaration=True)
+    )
+    response.headers["ETag"] = entry_etag(row)
+    return response
 
 
 @app.get("/service")
@@ -365,6 +405,7 @@ def collection() -> Response:
         ET.tostring(atom_entry(row), encoding="utf-8", xml_declaration=True), status=201
     )
     response.headers["Location"] = f"{BASE_URL}/entries/{row['id']}.atom"
+    response.headers["ETag"] = entry_etag(row)
     return response
 
 
