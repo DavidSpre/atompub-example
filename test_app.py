@@ -42,6 +42,22 @@ class AtomNotebookTests(unittest.TestCase):
         self.assertIn("/entries/", response.headers["Location"])
         self.assertEqual(self.client.get("/feed.atom").status_code, 200)
 
+    def test_atompub_put_updates_existing_entry(self) -> None:
+        create_response = self.client.post(
+            "/collections/entries",
+            data=b"<entry xmlns='http://www.w3.org/2005/Atom'><title>Original</title><content>Old content</content></entry>",
+            content_type="application/atom+xml",
+        )
+        entry_url = create_response.headers["Location"].replace(app.BASE_URL, "")
+        update_response = self.client.put(
+            entry_url,
+            data=b"<entry xmlns='http://www.w3.org/2005/Atom'><title>Updated</title><content>New content</content></entry>",
+            content_type="application/atom+xml",
+        )
+        self.assertEqual(update_response.status_code, 200)
+        self.assertIn(b"<title>Updated</title>", update_response.data)
+        self.assertIn(b"<content type=\"text\">New content</content>", update_response.data)
+
     def test_websub_subscription_receives_new_entry(self) -> None:
         response = self.client.get(
             "/hub",

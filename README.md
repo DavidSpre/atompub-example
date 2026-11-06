@@ -6,6 +6,7 @@ This prototype lets users publish short entries through a web form. Entries are 
 - `GET /service` returns an Atom Publishing Protocol service document.
 - `GET /collections/entries` reads the AtomPub collection.
 - `POST /collections/entries` accepts an Atom `<entry>` and publishes it.
+- `PUT /entries/<id>.atom` replaces an existing Atom entry.
 - `GET /hub` and `POST /hub` implement the WebSub subscription handshake.
 - New entries are delivered as Atom feed updates to registered WebSub callbacks.
 
@@ -102,5 +103,23 @@ curl.exe -X POST "http://localhost:5000/collections/entries" `
 ```
 
 The callback terminal should print the updated Atom feed. You can also publish an entry with the web form at <http://localhost:5000>.
+
+To update an existing entry, first note its numeric ID from its `Location` header or Atom entry URL, then send a complete replacement Atom entry:
+
+```sh
+curl -X PUT "http://localhost:5000/entries/1.atom" \
+  -H "Content-Type: application/atom+xml" \
+  --data-binary "<entry xmlns='http://www.w3.org/2005/Atom'><title>Updated title</title><content>Updated content</content></entry>"
+```
+
+On Windows PowerShell:
+
+```powershell
+curl.exe -X PUT "http://localhost:5000/entries/1.atom" `
+  -H "Content-Type: application/atom+xml" `
+  --data-binary "<entry xmlns='http://www.w3.org/2005/Atom'><title>Updated title</title><content>Updated content</content></entry>"
+```
+
+The server returns the updated Atom entry with status `200 OK` and sends the updated feed to WebSub subscribers.
 
 For a real external feed reader or callback service, the callback must be publicly reachable. Use a tunnel such as `ngrok http 5001` and subscribe using its HTTPS callback URL.

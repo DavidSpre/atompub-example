@@ -94,6 +94,25 @@ def save_entry(title: str, content: str, author: str) -> sqlite3.Row:
     return row
 
 
+def update_entry(entry_id: int, title: str, content: str, author: str) -> sqlite3.Row | None:
+    updated_at = utc_now().isoformat()
+    with db_lock, db_connection() as connection:
+        connection.execute(
+            """
+            UPDATE entries
+            SET title = ?, content = ?, author = ?, created_at = ?
+            WHERE id = ?
+            """,
+            (title, content, author, updated_at, entry_id),
+        )
+        row = connection.execute(
+            "SELECT * FROM entries WHERE id = ?", (entry_id,)
+        ).fetchone()
+    if row is not None:
+        notify_subscribers()
+    return row
+
+
 def list_entries() -> list[sqlite3.Row]:
     with db_connection() as connection:
         return connection.execute(
@@ -302,11 +321,19 @@ def feed() -> Response:
     return atom_response(atom_feed(list_entries()))
 
 
-@app.get("/entries/<int:entry_id>.atom")
+@app.route("/entries/<int:entry_id>.atom", methods=["GET", "PUT"])
 def entry_atom(entry_id: int) -> Response:
     row = get_entry(entry_id)
     if row is None:
         return Response("Entry not found", status=404)
+    if request.method == "PUT":
+        try:
+            title, content, author = parse_atom_entry(request.get_data())
+        except ValueError as error:
+            return Response(str(error), status=400, content_type="text/plain; charset=utf-8")
+        row = update_entry(entry_id, title, content, author)
+        if row is None:
+            return Response("Entry not found", status=404)
     return atom_response(ET.tostring(atom_entry(row), encoding="utf-8", xml_declaration=True))
 
 
