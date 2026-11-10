@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
 import json
 import os
 import secrets
@@ -11,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 from contextlib import contextmanager
 from collections.abc import Generator
 from datetime import datetime, timezone
@@ -152,7 +154,12 @@ def atom_entry(row: sqlite3.Row) -> ET.Element:
     jsonld_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
     jsonld_link.set("rel", "alternate")
     jsonld_link.set("type", "application/ld+json")
-    jsonld_link.set("href", f"{BASE_URL}/entries/{row['id']}.jsonld")
+    jsonld_link.set("href", f"{BASE_URL}/crates/{row['id']}/ro-crate-metadata.jsonld")
+    crate_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
+    crate_link.set("rel", "alternate")
+    crate_link.set("type", "application/zip")
+    crate_link.set("title", "Complete RO-Crate")
+    crate_link.set("href", f"{BASE_URL}/crates/{row['id']}.zip")
     edit_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
     edit_link.set("rel", "edit")
     edit_link.set("href", f"{BASE_URL}/entries/{row['id']}.atom")
@@ -163,8 +170,8 @@ def atom_entry(row: sqlite3.Row) -> ET.Element:
 
 
 def ro_crate_entry(row: sqlite3.Row) -> dict[str, object]:
-    entry_id = f"{BASE_URL}/entries/{row['id']}.jsonld"
-    author_id = f"{entry_id}#author"
+    entry_id = "data/entry.txt"
+    author_id = "#author"
     return {
         "@context": "https://w3id.org/ro/crate/1.1/context",
         "@graph": [
@@ -183,10 +190,9 @@ def ro_crate_entry(row: sqlite3.Row) -> dict[str, object]:
             },
             {
                 "@id": entry_id,
-                "@type": "CreativeWork",
-                "name": row["title"],
-                "text": row["content"],
-                "dateCreated": row["created_at"],
+                "@type": "File",
+                "name": "Entry content",
+                "encodingFormat": "text/plain",
                 "author": {"@id": author_id},
                 "isPartOf": {"@id": "./"},
             },
@@ -197,6 +203,16 @@ def ro_crate_entry(row: sqlite3.Row) -> dict[str, object]:
             },
         ],
     }
+
+
+def ro_crate_archive(row: sqlite3.Row) -> bytes:
+    metadata = json.dumps(ro_crate_entry(row), indent=2).encode("utf-8")
+    content = row["content"].encode("utf-8")
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as crate:
+        crate.writestr("ro-crate-metadata.jsonld", metadata)
+        crate.writestr("data/entry.txt", content)
+    return archive.getvalue()
 
 
 def atom_feed(rows: list[sqlite3.Row]) -> bytes:
@@ -358,6 +374,8 @@ def page_template() -> str:
             <small>By {{ entry["author"] }} · {{ entry["created_at"] }}</small>
             <p>{{ entry["content"] }}</p>
             <a href="{{ url_for('entry_atom', entry_id=entry['id']) }}">Atom entry</a>
+            · <a href="{{ url_for('crate_metadata', entry_id=entry['id']) }}">RO-Crate metadata</a>
+            · <a href="{{ url_for('crate_archive', entry_id=entry['id']) }}">Download RO-Crate ZIP</a>
           </article>
         {% else %}<p>No entries yet.</p>{% endfor %}
       </body>
@@ -401,6 +419,30 @@ def entry_jsonld(entry_id: int) -> Response:
     if row is None:
         return Response("Entry not found", status=404)
     response = jsonld_response(ro_crate_entry(row))
+    response.headers["ETag"] = entry_etag(row)
+    return response
+
+
+@app.get("/crates/<int:entry_id>/ro-crate-metadata.jsonld")
+def crate_metadata(entry_id: int) -> Response:
+    row = get_entry(entry_id)
+    if row is None:
+        return Response("Crate not found", status=404)
+    response = jsonld_response(ro_crate_entry(row))
+    response.headers["ETag"] = entry_etag(row)
+    return response
+
+
+@app.get("/crates/<int:entry_id>.zip")
+def crate_archive(entry_id: int) -> Response:
+    row = get_entry(entry_id)
+    if row is None:
+        return Response("Crate not found", status=404)
+    response = Response(
+        ro_crate_archive(row),
+        content_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="ro-crate-{entry_id}.zip"'},
+    )
     response.headers["ETag"] = entry_etag(row)
     return response
 

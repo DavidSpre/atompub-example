@@ -3,6 +3,8 @@ import os
 import tempfile
 import threading
 import unittest
+import zipfile
+from io import BytesIO
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree as ET
@@ -34,7 +36,12 @@ class AtomNotebookTests(unittest.TestCase):
             "{http://www.w3.org/2005/Atom}entry/{http://www.w3.org/2005/Atom}link[@type='application/ld+json']"
         )
         self.assertIsNotNone(jsonld_link)
-        self.assertTrue(jsonld_link.get("href", "").endswith(".jsonld"))
+        self.assertTrue(jsonld_link.get("href", "").endswith("ro-crate-metadata.jsonld"))
+        crate_link = root.find(
+            "{http://www.w3.org/2005/Atom}entry/{http://www.w3.org/2005/Atom}link[@type='application/zip']"
+        )
+        self.assertIsNotNone(crate_link)
+        self.assertTrue(crate_link.get("href", "").endswith(".zip"))
 
     def test_entry_is_available_as_ro_crate_jsonld(self) -> None:
         create_response = self.client.post(
@@ -42,15 +49,27 @@ class AtomNotebookTests(unittest.TestCase):
             data={"title": "RO-Crate entry", "author": "Ada", "content": "Structured content"},
         )
         self.assertEqual(create_response.status_code, 302)
-        entry = self.client.get("/entries/1.jsonld")
+        entry = self.client.get("/crates/1/ro-crate-metadata.jsonld")
         self.assertEqual(entry.status_code, 200)
         self.assertTrue(entry.content_type.startswith("application/ld+json"))
         document = json.loads(entry.data)
         self.assertEqual(document["@context"], "https://w3id.org/ro/crate/1.1/context")
         graph = {item["@type"]: item for item in document["@graph"] if "@type" in item}
-        self.assertEqual(graph["CreativeWork"]["name"], "RO-Crate entry")
-        self.assertEqual(graph["CreativeWork"]["text"], "Structured content")
+        self.assertEqual(graph["Dataset"]["name"], "RO-Crate entry")
+        self.assertEqual(graph["File"]["@id"], "data/entry.txt")
         self.assertEqual(graph["Person"]["name"], "Ada")
+        crate = self.client.get("/crates/1.zip")
+        self.assertEqual(crate.status_code, 200)
+        with zipfile.ZipFile(BytesIO(crate.data)) as archive:
+            self.assertEqual(
+                set(archive.namelist()),
+                {"ro-crate-metadata.jsonld", "data/entry.txt"},
+            )
+            self.assertEqual(archive.read("data/entry.txt"), b"Structured content")
+            self.assertEqual(
+                json.loads(archive.read("ro-crate-metadata.jsonld")),
+                document,
+            )
 
     def test_atompub_collection_creates_entry(self) -> None:
         payload = b"""<?xml version="1.0"?><entry xmlns="http://www.w3.org/2005/Atom">
