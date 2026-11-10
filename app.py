@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
@@ -148,6 +149,10 @@ def atom_entry(row: sqlite3.Row) -> ET.Element:
     self_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
     self_link.set("rel", "self")
     self_link.set("href", f"{BASE_URL}/entries/{row['id']}.atom")
+    jsonld_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
+    jsonld_link.set("rel", "alternate")
+    jsonld_link.set("type", "application/ld+json")
+    jsonld_link.set("href", f"{BASE_URL}/entries/{row['id']}.jsonld")
     edit_link = ET.SubElement(entry, f"{{{ATOM_NS}}}link")
     edit_link.set("rel", "edit")
     edit_link.set("href", f"{BASE_URL}/entries/{row['id']}.atom")
@@ -155,6 +160,43 @@ def atom_entry(row: sqlite3.Row) -> ET.Element:
     xml_text(author, "name", row["author"])
     xml_text(entry, "content", row["content"]).set("type", "text")
     return entry
+
+
+def ro_crate_entry(row: sqlite3.Row) -> dict[str, object]:
+    entry_id = f"{BASE_URL}/entries/{row['id']}.jsonld"
+    author_id = f"{entry_id}#author"
+    return {
+        "@context": "https://w3id.org/ro/crate/1.1/context",
+        "@graph": [
+            {
+                "@id": "ro-crate-metadata.jsonld",
+                "@type": "CreativeWork",
+                "about": {"@id": "./"},
+                "conformsTo": {"@id": "https://w3id.org/ro/crate/1.1"},
+            },
+            {
+                "@id": "./",
+                "@type": "Dataset",
+                "name": row["title"],
+                "datePublished": row["created_at"],
+                "hasPart": {"@id": entry_id},
+            },
+            {
+                "@id": entry_id,
+                "@type": "CreativeWork",
+                "name": row["title"],
+                "text": row["content"],
+                "dateCreated": row["created_at"],
+                "author": {"@id": author_id},
+                "isPartOf": {"@id": "./"},
+            },
+            {
+                "@id": author_id,
+                "@type": "Person",
+                "name": row["author"],
+            },
+        ],
+    }
 
 
 def atom_feed(rows: list[sqlite3.Row]) -> bytes:
@@ -177,6 +219,14 @@ def atom_feed(rows: list[sqlite3.Row]) -> bytes:
 
 def atom_response(payload: bytes, status: int = 200) -> Response:
     return Response(payload, status=status, content_type="application/atom+xml; charset=utf-8")
+
+
+def jsonld_response(payload: dict[str, object], status: int = 200) -> Response:
+    return Response(
+        json.dumps(payload, indent=2),
+        status=status,
+        content_type="application/ld+json; charset=utf-8",
+    )
 
 
 def entry_etag(row: sqlite3.Row) -> str:
@@ -343,6 +393,16 @@ def create_entry() -> ResponseReturnValue:
 @app.get("/feed.atom")
 def feed() -> Response:
     return atom_response(atom_feed(list_entries()))
+
+
+@app.get("/entries/<int:entry_id>.jsonld")
+def entry_jsonld(entry_id: int) -> Response:
+    row = get_entry(entry_id)
+    if row is None:
+        return Response("Entry not found", status=404)
+    response = jsonld_response(ro_crate_entry(row))
+    response.headers["ETag"] = entry_etag(row)
+    return response
 
 
 @app.route("/entries/<int:entry_id>.atom", methods=["GET", "PUT", "DELETE"])

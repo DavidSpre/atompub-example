@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import threading
@@ -29,6 +30,27 @@ class AtomNotebookTests(unittest.TestCase):
         self.assertEqual(feed.status_code, 200)
         root = ET.fromstring(feed.data)
         self.assertEqual(root.findtext("{http://www.w3.org/2005/Atom}entry/{http://www.w3.org/2005/Atom}title"), "Hello")
+        jsonld_link = root.find(
+            "{http://www.w3.org/2005/Atom}entry/{http://www.w3.org/2005/Atom}link[@type='application/ld+json']"
+        )
+        self.assertIsNotNone(jsonld_link)
+        self.assertTrue(jsonld_link.get("href", "").endswith(".jsonld"))
+
+    def test_entry_is_available_as_ro_crate_jsonld(self) -> None:
+        create_response = self.client.post(
+            "/entries",
+            data={"title": "RO-Crate entry", "author": "Ada", "content": "Structured content"},
+        )
+        self.assertEqual(create_response.status_code, 302)
+        entry = self.client.get("/entries/1.jsonld")
+        self.assertEqual(entry.status_code, 200)
+        self.assertTrue(entry.content_type.startswith("application/ld+json"))
+        document = json.loads(entry.data)
+        self.assertEqual(document["@context"], "https://w3id.org/ro/crate/1.1/context")
+        graph = {item["@type"]: item for item in document["@graph"] if "@type" in item}
+        self.assertEqual(graph["CreativeWork"]["name"], "RO-Crate entry")
+        self.assertEqual(graph["CreativeWork"]["text"], "Structured content")
+        self.assertEqual(graph["Person"]["name"], "Ada")
 
     def test_atompub_collection_creates_entry(self) -> None:
         payload = b"""<?xml version="1.0"?><entry xmlns="http://www.w3.org/2005/Atom">

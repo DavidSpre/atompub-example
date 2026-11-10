@@ -3,6 +3,7 @@
 This prototype lets users publish short entries through a web form. Entries are stored in SQLite and exposed as Atom:
 
 - `GET /feed.atom` returns the Atom feed.
+- `GET /entries/<id>.jsonld` returns an entry as an RO-Crate 1.1 JSON-LD document.
 - `GET /service` returns an Atom Publishing Protocol service document.
 - `GET /collections/entries` reads the AtomPub collection.
 - `POST /collections/entries` accepts an Atom `<entry>` and publishes it.
@@ -10,6 +11,10 @@ This prototype lets users publish short entries through a web form. Entries are 
 - `DELETE /entries/<id>.atom` deletes an existing Atom entry.
 - `GET /hub` and `POST /hub` implement the WebSub subscription handshake.
 - New entries are delivered as Atom feed updates to registered WebSub callbacks.
+
+Each Atom entry includes an `alternate` link with media type `application/ld+json`
+to its RO-Crate representation. The JSON-LD document contains the entry, its
+author, and the containing dataset in an RO-Crate metadata graph.
 
 ## Start the base app
 
